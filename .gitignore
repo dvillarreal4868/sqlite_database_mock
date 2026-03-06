@@ -214,3 +214,7 @@ __marimo__/
 _site/
 _book/
 /.quarto/
+
+# Project-specific
+/data/raw/
+/data/processed/
