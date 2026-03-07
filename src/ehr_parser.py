@@ -9,6 +9,7 @@ Use `parse_ehr()` to extract all fields at once into a dict, ready for a DataFra
 # Imports
 from pathlib import Path
 import pandas as pd
+import numpy as np
 
 
 # ── Low-level helpers ──────────────────────────────────────────────────────────
@@ -113,6 +114,65 @@ def extract_record_date(text: str) -> str | None:
 #     return " ".join(section.split()) if section else None
 
 
+# ── Look for scans ──────────────────────────────────────────────────────────────
+
+def find_scan_paths(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    For each row, check the sibling 'mri' and 'ct' directories
+    for a file matching the patient_id prefix. Adds 'path_mri'
+    and 'path_ct' columns to the dataframe.
+    """
+    mri_paths = []
+    ct_paths = []
+
+    for _, row in df.iterrows():
+        irb_dir = Path(row["path_ehr"]).parent.parent  # up from /ehr/ to /irb_2025_003/
+
+        mri_match = None
+        for f in (irb_dir / "mri").iterdir() if (irb_dir / "mri").exists() else []:
+            if f.name.startswith(row["patient_id"]):
+                mri_match = str(f)
+                break
+
+        ct_match = None
+        for f in (irb_dir / "ct").iterdir() if (irb_dir / "ct").exists() else []:
+            if f.name.startswith(row["patient_id"]):
+                ct_match = str(f)
+                break
+
+        mri_paths.append(mri_match)
+        ct_paths.append(ct_match)
+
+    df["path_mri"] = mri_paths
+    df["path_ct"] = ct_paths
+
+    return df
+
+# ── Dataframe adjustments ──────────────────────────────────────────────────────
+
+def melt_df(df: pd.DataFrame) -> pd.DataFrame:
+    '''
+    Convert dataframe to melted dataframe.
+
+    '''
+
+    # Melt dataframe into long-form
+    df = df.melt(
+        id_vars=['patient_id', 'irb_protocol', 'record_date'],
+        value_vars=['path_ehr', 'path_mri', 'path_ct'],
+        var_name='modality',
+        value_name='assert_uri'
+    )
+
+    # 2. Clean up the 'modality' column (optional: removes the 'path_' prefix)
+    df['modality'] = df['modality'].str.replace('path_', '', regex=False)
+
+    # 3. Add the 'status' column based on whether assert_uri has a value
+    df['status'] = np.where(df['assert_uri'].notna(), 'complete', 'pending')
+
+    return df
+
+
 # ── Master parser ──────────────────────────────────────────────────────────────
 
 def parse_ehr(texts: list[str]) -> dict:
@@ -185,4 +245,4 @@ def build_dataframe(file_paths: list[str | Path]) -> pd.DataFrame:
         # Append
         rows.append(row)
 
-    return pd.DataFrame(rows)
+    return melt_df(find_scan_paths(pd.DataFrame(rows)))
